@@ -1,0 +1,49 @@
+---
+# Prometheus Adapter configuration.
+# Translates the router's `tokens_per_second_per_pod` Prometheus gauge into a
+# Kubernetes external metric that the HPA can consume.
+#
+# Install the adapter via Helm before applying this config:
+#   helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+#   helm install prometheus-adapter prometheus-community/prometheus-adapter \
+#     -n monitoring --create-namespace \
+#     -f prometheus-adapter-values.yaml
+#
+# Then apply this ConfigMap to update the adapter's rules:
+#   kubectl apply -f custom-metrics.yaml
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: adapter-config
+  namespace: monitoring
+data:
+  config.yaml: |
+    rules:
+      # External metric: tokens_per_second_per_pod
+      # Queried by the HPA as: external.metrics.k8s.io/tokens_per_second_per_pod
+      - seriesQuery: 'tokens_per_second_per_pod'
+        resources:
+          overrides: {}
+        name:
+          matches: "tokens_per_second_per_pod"
+          as: "tokens_per_second_per_pod"
+        metricsQuery: 'tokens_per_second_per_pod'
+
+      # External metric: router_queue_depth_total (useful for alternative HPA)
+      - seriesQuery: 'router_queue_depth_total'
+        resources:
+          overrides: {}
+        name:
+          matches: "router_queue_depth_total"
+          as: "router_queue_depth_total"
+        metricsQuery: 'router_queue_depth_total'
+---
+# Prometheus Adapter Helm values (save as prometheus-adapter-values.yaml)
+# Reference only — not a k8s manifest.
+#
+# prometheus:
+#   url: http://prometheus-server.monitoring.svc.cluster.local
+#   port: 80
+# rules:
+#   existing: adapter-config   # point adapter at our ConfigMap
