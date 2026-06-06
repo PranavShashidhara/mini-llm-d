@@ -1,0 +1,31 @@
+# requirements.txt — mini-llm-d  (RDMA / NCCL Edition)
+#
+# Laptop / CI  (--no-gpu):   pip install -r requirements.txt
+# GPU pod     (real vLLM):   pip install -r requirements.txt -r requirements-gpu.txt
+#
+# All packages below work on a CPU-only laptop with Python 3.9+
+
+# ── Benchmarking ─────────────────────────────────────────────────────────────
+matplotlib>=3.7.0          # result charts (rdma_kv_latency.png, nccl_throughput.png)
+numpy>=1.24.0              # array ops in sim NCCL
+
+# ── Observability ────────────────────────────────────────────────────────────
+prometheus_client>=0.17.0  # /metrics exposition (router + server + exporter)
+
+# ── Tracing (optional — falls back to logger if absent) ──────────────────────
+# opentelemetry-sdk>=1.20.0
+# opentelemetry-exporter-otlp>=1.20.0
+
+# ── Load testing ─────────────────────────────────────────────────────────────
+# locust>=2.17.0            # Scenario A-D load tests (install separately)
+
+# ── Kubernetes client (real NCCL rendezvous / ConfigMap writes) ───────────────
+# kubernetes>=28.1.0        # only needed in GPU / k8s mode
+
+# ── Real RDMA (GPU pod only) ─────────────────────────────────────────────────
+# pyverbs                   # part of rdma-core; install via apt on Ubuntu 22.04:
+#                           #   sudo apt-get install -y rdma-core python3-pyverbs
+
+# ── Real vLLM (GPU pod only) — see requirements-gpu.txt ─────────────────────
+# vllm>=0.4.0
+# torch>=2.2.0

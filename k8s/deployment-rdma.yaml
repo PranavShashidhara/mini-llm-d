@@ -1,0 +1,255 @@
+# k8s/deployment-rdma.yaml
+# Inference pod with RDMA device resource + NCCL environment variables.
+#
+# Diff from base deployment.yaml:
+#   + rdma/rdma_shared_dev_a: 1   RDMA device plugin resource
+#   + NCCL_SOCKET_IFNAME, NCCL_DEBUG, RDMA_KV_CACHE_MODE env vars
+#   + IPC_LOCK + SYS_PTRACE capabilities (required for ibverbs memory pinning)
+#   + rdma-exporter sidecar container
+#
+# For --no-gpu laptop mode:
+#   - Remove the nvidia.com/gpu and rdma/rdma_shared_dev_a resource requests
+#   - Replace the vllm image with python:3.11-slim
+#   - Pass MINI_LLM_NO_GPU=1 as an environment variable
+#
+# NOTE: Replace <REGISTRY> and image tags before deploying.
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mini-llm-d-prefill
+  namespace: default
+  labels:
+    app: mini-llm-d
+    role: prefill
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mini-llm-d
+      role: prefill
+  template:
+    metadata:
+      labels:
+        app: mini-llm-d
+        role: prefill
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        # ── Main inference container ─────────────────────────────────────
+        - name: vllm-server
+          image: <REGISTRY>/mini-llm-d-server:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "server.py"]
+          args:
+            - "--role=prefill"
+            - "--port=8000"
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            # RDMA mode: replaces tmpfs KV-cache hand-off
+            - name: RDMA_KV_CACHE_MODE
+              value: "rdma_write"
+            - name: RDMA_CTRL_PORT
+              value: "18515"
+            # NCCL configuration
+            - name: NCCL_SOCKET_IFNAME
+              value: eth0
+            - name: NCCL_DEBUG
+              value: INFO
+            - name: NCCL_P2P_DISABLE
+              value: "0"
+            - name: NCCL_NET_GDR_LEVEL
+              value: "2"
+            # Pod identity (used in metrics labels)
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            # Set MINI_LLM_NO_GPU=1 here for CPU-only simulation:
+            # - name: MINI_LLM_NO_GPU
+            #   value: "1"
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+              rdma/rdma_shared_dev_a: 1    # RDMA device plugin
+            requests:
+              nvidia.com/gpu: 1
+              rdma/rdma_shared_dev_a: 1
+          securityContext:
+            capabilities:
+              add:
+                - IPC_LOCK      # required for ibverbs memory pinning (mlock)
+                - SYS_PTRACE    # required for NCCL / cuda-gdb profiling
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+
+        # ── RDMA exporter sidecar ────────────────────────────────────────
+        - name: rdma-exporter
+          image: <REGISTRY>/mini-llm-d-server:latest
+          imagePullPolicy: IfNotPresent
+          command: ["python", "rdma/rdma_exporter/exporter.py"]
+          args: ["--port=9101"]
+          ports:
+            - containerPort: 9101
+              name: rdma-metrics
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: RDMA_DEVICE
+              value: "rxe0"   # soft-RDMA device; real: mlx5_0
+          resources:
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+          securityContext:
+            capabilities:
+              add: ["SYS_ADMIN"]  # needed to read sysfs RDMA counters
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mini-llm-d-prefill
+  namespace: default
+spec:
+  selector:
+    app: mini-llm-d
+    role: prefill
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+    - name: rdma-metrics
+      port: 9101
+      targetPort: 9101
+    - name: rdma-ctrl
+      port: 18515
+      targetPort: 18515
+  clusterIP: None   # headless — router discovers pods directly
+---
+# ── Decode deployment (mirrors Prefill with role=decode) ──────────────────
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mini-llm-d-decode
+  namespace: default
+  labels:
+    app: mini-llm-d
+    role: decode
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: mini-llm-d
+      role: decode
+  template:
+    metadata:
+      labels:
+        app: mini-llm-d
+        role: decode
+    spec:
+      containers:
+        - name: vllm-server
+          image: <REGISTRY>/mini-llm-d-server:latest
+          command: ["python", "server.py"]
+          args: ["--role=decode", "--port=8000"]
+          ports:
+            - containerPort: 8000
+          env:
+            - name: RDMA_KV_CACHE_MODE
+              value: "rdma_write"
+            - name: RDMA_CTRL_PORT
+              value: "18515"
+            - name: NCCL_SOCKET_IFNAME
+              value: eth0
+            - name: NCCL_DEBUG
+              value: INFO
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            limits:
+              nvidia.com/gpu: 1
+              rdma/rdma_shared_dev_a: 1
+          securityContext:
+            capabilities:
+              add: ["IPC_LOCK", "SYS_PTRACE"]
+        - name: rdma-exporter
+          image: <REGISTRY>/mini-llm-d-server:latest
+          command: ["python", "rdma/rdma_exporter/exporter.py"]
+          args: ["--port=9101"]
+          ports:
+            - containerPort: 9101
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+          resources:
+            limits:
+              cpu: "100m"
+              memory: "64Mi"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mini-llm-d-decode
+spec:
+  selector:
+    app: mini-llm-d
+    role: decode
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+    - name: rdma-metrics
+      port: 9101
+      targetPort: 9101
+  clusterIP: None
+---
+# ── NCCL rendezvous ConfigMap (written by rank 0, read by rank 1) ─────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nccl-tp2-rendezvous
+  namespace: default
+data:
+  nccl_unique_id: ""   # populated at runtime by rank 0 pod
+---
+# ── HPA for Decode pods ───────────────────────────────────────────────────
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mini-llm-d-decode-hpa
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mini-llm-d-decode
+  minReplicas: 2
+  maxReplicas: 8
+  metrics:
+    - type: Pods
+      pods:
+        metric:
+          name: vllm_tokens_generated_total
+        target:
+          type: AverageValue
+          averageValue: "1000"
