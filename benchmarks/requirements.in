@@ -1,0 +1,12 @@
+# benchmarks/requirements.in
+#
+# Human-readable, unpinned dependency list for benchmarks.
+# To regenerate the pinned requirements.txt:
+#   uv pip compile requirements.in --python-version 3.11 -o requirements.txt
+
+locust>=2.29,<3
+numpy>=1.26,<2
+matplotlib>=3.9,<4
+httpx>=0.27,<0.28
+xxhash>=3.4,<4
+kubernetes>=30,<31

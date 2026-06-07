@@ -1,0 +1,290 @@
+---
+# k8s/deployment.yaml
+# Inference pod StatefulSet — runs vLLM + FastAPI per GPU pod.
+# Deploy prefill and decode pools separately by setting POD_ROLE.
+
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: inference-combined
+  namespace: mini-llmd
+  labels:
+    app: mini-llmd
+    role: combined
+spec:
+  serviceName: inference-headless
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mini-llmd
+      role: combined
+  template:
+    metadata:
+      labels:
+        app: mini-llmd
+        role: combined
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8000"
+        prometheus.io/path: "/metrics"
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: inference
+          image: mini-llmd-inference:latest
+          imagePullPolicy: Never   # minikube local image
+          ports:
+            - containerPort: 8000
+              name: http
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_ROLE
+              value: "combined"
+            - name: CONFIG_PATH
+              value: "/app/config.yaml"
+            - name: OTEL_ENDPOINT
+              value: "http://jaeger.monitoring:4317"
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              memory: "14Gi"
+              cpu: "4"
+            requests:
+              nvidia.com/gpu: "1"
+              memory: "12Gi"
+              cpu: "2"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models
+            - name: kv-cache-shared
+              mountPath: /kv-cache
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 90
+            periodSeconds: 10
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 120
+            periodSeconds: 30
+            failureThreshold: 3
+      volumes:
+        - name: kv-cache-shared
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+      nodeSelector:
+        kubernetes.io/os: linux
+
+  volumeClaimTemplates:
+    - metadata:
+        name: model-cache
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+
+---
+# Prefill-only pool (for P/D disaggregation — Week 4)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: inference-prefill
+  namespace: mini-llmd
+  labels:
+    app: mini-llmd
+    role: prefill
+spec:
+  serviceName: inference-prefill-headless
+  replicas: 0  # Enable in Week 4
+  selector:
+    matchLabels:
+      app: mini-llmd
+      role: prefill
+  template:
+    metadata:
+      labels:
+        app: mini-llmd
+        role: prefill
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: inference
+          image: mini-llmd-inference:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_ROLE
+              value: "prefill"
+            - name: OTEL_ENDPOINT
+              value: "http://jaeger.monitoring:4317"
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              memory: "14Gi"
+              cpu: "4"
+            requests:
+              nvidia.com/gpu: "1"
+              memory: "12Gi"
+              cpu: "2"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models
+            - name: kv-cache-shared
+              mountPath: /kv-cache
+      volumes:
+        - name: kv-cache-shared
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: model-cache
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+
+---
+# Decode-only pool (for P/D disaggregation — Week 4)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: inference-decode
+  namespace: mini-llmd
+  labels:
+    app: mini-llmd
+    role: decode
+spec:
+  serviceName: inference-decode-headless
+  replicas: 0  # Enable in Week 4
+  selector:
+    matchLabels:
+      app: mini-llmd
+      role: decode
+  template:
+    metadata:
+      labels:
+        app: mini-llmd
+        role: decode
+    spec:
+      terminationGracePeriodSeconds: 60
+      containers:
+        - name: inference
+          image: mini-llmd-inference:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 8000
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: POD_ROLE
+              value: "decode"
+            - name: OTEL_ENDPOINT
+              value: "http://jaeger.monitoring:4317"
+          resources:
+            limits:
+              nvidia.com/gpu: "1"
+              memory: "14Gi"
+              cpu: "4"
+            requests:
+              nvidia.com/gpu: "1"
+              memory: "12Gi"
+              cpu: "2"
+          volumeMounts:
+            - name: model-cache
+              mountPath: /models
+            - name: kv-cache-shared
+              mountPath: /kv-cache
+      volumes:
+        - name: kv-cache-shared
+          emptyDir:
+            medium: Memory
+            sizeLimit: 2Gi
+  volumeClaimTemplates:
+    - metadata:
+        name: model-cache
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+
+---
+# Router deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: router
+  namespace: mini-llmd
+  labels:
+    app: mini-llmd
+    component: router
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mini-llmd
+      component: router
+  template:
+    metadata:
+      labels:
+        app: mini-llmd
+        component: router
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9000"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: router
+          image: mini-llmd-router:latest
+          imagePullPolicy: Never
+          ports:
+            - containerPort: 9000
+          env:
+            - name: POD_ENDPOINTS
+              value: "http://inference-combined-0.inference-headless.mini-llmd:8000,http://inference-combined-1.inference-headless.mini-llmd:8000"
+            - name: ROUTING_MODE
+              value: "prefix_cache"
+            - name: CIRCUIT_BREAK_MS
+              value: "100"
+            - name: POLL_INTERVAL_MS
+              value: "500"
+            - name: OTEL_ENDPOINT
+              value: "http://jaeger.monitoring:4317"
+          resources:
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+            requests:
+              memory: "256Mi"
+              cpu: "200m"
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 9000
+            initialDelaySeconds: 10
+            periodSeconds: 15

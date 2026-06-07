@@ -1,0 +1,14 @@
+# router/requirements.in
+#
+# Human-readable, unpinned dependency list for the router.
+# To regenerate the locked requirements.txt:
+#   uv pip compile requirements.in --python-version 3.11 -o requirements.txt
+
+fastapi>=0.111,<0.112
+uvicorn[standard]>=0.30,<0.31
+httpx>=0.27,<0.28
+xxhash>=3.4,<4
+prometheus-client>=0.20,<0.21
+opentelemetry-api>=1.24,<2
+opentelemetry-sdk>=1.24,<2
+opentelemetry-exporter-otlp-proto-grpc>=1.24,<2

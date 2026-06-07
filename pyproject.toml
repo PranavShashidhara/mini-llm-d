@@ -1,0 +1,32 @@
+# pyproject.toml — mini-llm-d workspace root
+#
+# This is NOT a package itself. It defines the uv workspace so that
+# `uv sync` from the repo root installs all sub-project deps.
+#
+# Sub-projects:
+#   inference/   — vLLM serving pod (GPU required)
+#   router/      — Request router (CPU only)
+#   benchmarks/  — Locust + matplotlib (CPU only)
+
+[tool.uv.workspace]
+members = [
+    "inference",
+    "router",
+    "benchmarks",
+]
+
+[tool.uv]
+# Resolve all sub-projects together so shared deps use the same version.
+# vLLM requires torch>=2.3 built against CUDA; we point uv at the CUDA
+# wheel index for torch/torchvision/torchaudio only.
+# See inference/pyproject.toml for the per-package index override.
+dev-dependencies = [
+    "ruff>=0.5,<0.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]

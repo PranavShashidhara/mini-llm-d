@@ -1,0 +1,215 @@
+{
+  "__inputs": [],
+  "__requires": [
+    {"type": "grafana", "id": "grafana", "name": "Grafana", "version": "10.0.0"},
+    {"type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0"}
+  ],
+  "annotations": {
+    "list": [
+      {
+        "datasource": {"type": "prometheus", "uid": "prometheus"},
+        "enable": true,
+        "expr": "changes(kube_horizontalpodautoscaler_status_current_replicas{horizontalpodautoscaler=\"inference-hpa\"}[1m]) > 0",
+        "hide": false,
+        "iconColor": "orange",
+        "name": "HPA Scale Events",
+        "step": "60s",
+        "titleFormat": "HPA: {{current_replicas}} pods"
+      }
+    ]
+  },
+  "description": "mini-llmd — LLM inference cluster observability",
+  "editable": true,
+  "graphTooltip": 1,
+  "id": null,
+  "panels": [
+    {
+      "id": 1,
+      "title": "Aggregate Tokens/sec",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "sum(router_pod_tokens_per_sec)",
+          "legendFormat": "Total tokens/sec"
+        },
+        {
+          "expr": "count(router_pod_tokens_per_sec) * 0",
+          "legendFormat": "Pod count (right axis)"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "reqps"},
+        "overrides": []
+      }
+    },
+    {
+      "id": 2,
+      "title": "Request Latency — p50 / p95 / p99",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 0, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(router_e2e_latency_seconds_bucket[2m])) by (le))",
+          "legendFormat": "p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(router_e2e_latency_seconds_bucket[2m])) by (le))",
+          "legendFormat": "p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(router_e2e_latency_seconds_bucket[2m])) by (le))",
+          "legendFormat": "p99"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {"unit": "s"},
+        "overrides": [
+          {
+            "matcher": {"id": "byName", "options": "p99"},
+            "properties": [{"id": "color", "value": {"fixedColor": "red", "mode": "fixed"}}]
+          }
+        ]
+      },
+      "options": {
+        "thresholds": {
+          "steps": [{"color": "red", "value": 0.1}]
+        }
+      }
+    },
+    {
+      "id": 3,
+      "title": "TTFT — p50 / p95 / p99",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(router_ttft_seconds_bucket[2m])) by (le))",
+          "legendFormat": "TTFT p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(router_ttft_seconds_bucket[2m])) by (le))",
+          "legendFormat": "TTFT p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(router_ttft_seconds_bucket[2m])) by (le))",
+          "legendFormat": "TTFT p99"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 4,
+      "title": "TPOT — p50 / p95 / p99",
+      "type": "timeseries",
+      "gridPos": {"x": 12, "y": 8, "w": 12, "h": 8},
+      "targets": [
+        {
+          "expr": "histogram_quantile(0.50, sum(rate(router_tpot_seconds_bucket[2m])) by (le))",
+          "legendFormat": "TPOT p50"
+        },
+        {
+          "expr": "histogram_quantile(0.95, sum(rate(router_tpot_seconds_bucket[2m])) by (le))",
+          "legendFormat": "TPOT p95"
+        },
+        {
+          "expr": "histogram_quantile(0.99, sum(rate(router_tpot_seconds_bucket[2m])) by (le))",
+          "legendFormat": "TPOT p99"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "s"}}
+    },
+    {
+      "id": 5,
+      "title": "Prefix Cache Hit Rate",
+      "type": "timeseries",
+      "gridPos": {"x": 0, "y": 16, "w": 8, "h": 6},
+      "targets": [
+        {
+          "expr": "router_prefix_cache_hit_rate",
+          "legendFormat": "Hit rate (60s window)"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "min": 0, "max": 1}}
+    },
+    {
+      "id": 6,
+      "title": "Per-Pod Queue Depth",
+      "type": "timeseries",
+      "gridPos": {"x": 8, "y": 16, "w": 8, "h": 6},
+      "targets": [
+        {
+          "expr": "router_pod_queue_depth",
+          "legendFormat": "{{pod}}"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "id": 7,
+      "title": "Circuit Breaker State",
+      "type": "stat",
+      "gridPos": {"x": 16, "y": 16, "w": 8, "h": 6},
+      "targets": [
+        {
+          "expr": "router_pod_circuit_broken",
+          "legendFormat": "{{pod}}"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {"type": "value", "options": {"0": {"text": "OK", "color": "green"}}},
+            {"type": "value", "options": {"1": {"text": "BROKEN", "color": "red"}}}
+          ]
+        }
+      }
+    },
+    {
+      "id": 8,
+      "title": "Active Pods",
+      "type": "stat",
+      "gridPos": {"x": 0, "y": 22, "w": 4, "h": 4},
+      "targets": [
+        {"expr": "router_active_pods", "legendFormat": "Healthy pods"}
+      ],
+      "fieldConfig": {"defaults": {"unit": "short"}}
+    },
+    {
+      "id": 9,
+      "title": "Request Rate",
+      "type": "timeseries",
+      "gridPos": {"x": 4, "y": 22, "w": 10, "h": 4},
+      "targets": [
+        {
+          "expr": "sum(rate(router_requests_total[1m]))",
+          "legendFormat": "req/s"
+        },
+        {
+          "expr": "sum(rate(router_requests_failed_total[1m]))",
+          "legendFormat": "errors/s"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "reqps"}}
+    },
+    {
+      "id": 10,
+      "title": "Cache Hit by Routing Mode",
+      "type": "piechart",
+      "gridPos": {"x": 14, "y": 22, "w": 10, "h": 4},
+      "targets": [
+        {
+          "expr": "sum(router_requests_total) by (cache_hit)",
+          "legendFormat": "cache_hit={{cache_hit}}"
+        }
+      ]
+    }
+  ],
+  "refresh": "5s",
+  "schemaVersion": 39,
+  "tags": ["mini-llmd", "inference", "llm"],
+  "time": {"from": "now-30m", "to": "now"},
+  "title": "mini-llmd Inference Cluster",
+  "uid": "mini-llmd-main",
+  "version": 1
+}

@@ -1,0 +1,26 @@
+# inference/config.yaml
+# Model and runtime configuration for mini-llm-d inference pods.
+
+model:
+  name: "meta-llama/Llama-3.2-3B-Instruct"
+  # Set to local HuggingFace cache path or a volume mount.
+  # In minikube, mount a hostPath volume to avoid repeated downloads.
+  path: "/models/llama-3.2-3b-instruct"
+  gpu_memory_utilization: 0.90
+  max_model_len: 4096
+  dtype: "bfloat16"
+
+serving:
+  port: 8000
+  # Maximum number of queued requests before returning 429
+  max_queue_depth: 32
+  # Sliding window for metrics calculation (seconds)
+  metrics_window_secs: 10
+
+routing:
+  # Number of prompt tokens hashed for prefix-cache lookup
+  prefix_hash_tokens: 256
+
+logging:
+  level: "INFO"
+  format: "json"

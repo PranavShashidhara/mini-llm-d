@@ -1,0 +1,184 @@
+---
+# k8s/wva.yaml
+# Workload-Variant Autoscaler (WVA)
+#
+# The WVA is a custom controller (CronJob + script) that monitors the ratio
+# of prefill-bound vs decode-bound requests and adjusts the StatefulSet
+# replica counts for each pool independently.
+#
+# In Week 4 (P/D disaggregation), this replaces the single combined HPA.
+#
+# Rebalance trigger: prefill/decode ratio drifts > 20% from target.
+# Default target ratio: 1 prefill pod per 2 decode pods.
+
+---
+# CronJob that runs the WVA controller every 30 seconds
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: wva-controller
+  namespace: mini-llmd
+  labels:
+    app: mini-llmd
+    component: wva
+spec:
+  schedule: "*/1 * * * *"   # Kubernetes minimum is 1m; use Deployment for 30s
+  concurrencyPolicy: Forbid
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          serviceAccountName: wva-sa
+          restartPolicy: Never
+          containers:
+            - name: wva
+              image: mini-llmd-wva:latest
+              imagePullPolicy: Never
+              env:
+                - name: PROMETHEUS_URL
+                  value: "http://prometheus-server.monitoring:80"
+                - name: PREFILL_STATEFULSET
+                  value: "inference-prefill"
+                - name: DECODE_STATEFULSET
+                  value: "inference-decode"
+                - name: NAMESPACE
+                  value: "mini-llmd"
+                - name: TARGET_PREFILL_RATIO
+                  value: "0.33"        # 1 prefill : 2 decode
+                - name: REBALANCE_THRESHOLD
+                  value: "0.20"        # 20% drift triggers rebalance
+                - name: MIN_PREFILL_PODS
+                  value: "1"
+                - name: MAX_PREFILL_PODS
+                  value: "2"
+                - name: MIN_DECODE_PODS
+                  value: "1"
+                - name: MAX_DECODE_PODS
+                  value: "3"
+              resources:
+                limits:
+                  memory: "128Mi"
+                  cpu: "100m"
+
+---
+# ServiceAccount and RBAC for the WVA controller
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: wva-sa
+  namespace: mini-llmd
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: wva-role
+  namespace: mini-llmd
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets", "statefulsets/scale"]
+    verbs: ["get", "list", "patch", "update"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: wva-rolebinding
+  namespace: mini-llmd
+subjects:
+  - kind: ServiceAccount
+    name: wva-sa
+    namespace: mini-llmd
+roleRef:
+  kind: Role
+  name: wva-role
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# WVA controller logic lives in a ConfigMap-mounted script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: wva-script
+  namespace: mini-llmd
+data:
+  wva.py: |
+    """
+    Workload-Variant Autoscaler controller script.
+    Runs as a Kubernetes CronJob. Queries Prometheus for current
+    prefill/decode load metrics and patches StatefulSet replica counts.
+    """
+    import os, sys, math, requests, json, logging
+    from kubernetes import client, config
+
+    logging.basicConfig(level=logging.INFO)
+    log = logging.getLogger("wva")
+
+    PROM = os.environ["PROMETHEUS_URL"]
+    PREFILL_SS = os.environ["PREFILL_STATEFULSET"]
+    DECODE_SS  = os.environ["DECODE_STATEFULSET"]
+    NS         = os.environ["NAMESPACE"]
+    TARGET_RATIO     = float(os.environ.get("TARGET_PREFILL_RATIO", "0.33"))
+    REBALANCE_THRESH = float(os.environ.get("REBALANCE_THRESHOLD", "0.20"))
+    MIN_P = int(os.environ.get("MIN_PREFILL_PODS", "1"))
+    MAX_P = int(os.environ.get("MAX_PREFILL_PODS", "2"))
+    MIN_D = int(os.environ.get("MIN_DECODE_PODS", "1"))
+    MAX_D = int(os.environ.get("MAX_DECODE_PODS", "3"))
+
+    def query(metric):
+        r = requests.get(f"{PROM}/api/v1/query", params={"query": metric}, timeout=5)
+        r.raise_for_status()
+        result = r.json()["data"]["result"]
+        return float(result[0]["value"][1]) if result else 0.0
+
+    try:
+        config.load_incluster_config()
+        apps_v1 = client.AppsV1Api()
+
+        # Query metrics
+        avg_prefill_time = query('avg(router_ttft_seconds{quantile="0.95"})')
+        avg_tpot         = query('avg(router_tpot_seconds{quantile="0.95"})')
+
+        # Infer current workload ratio from TTFT vs TPOT balance
+        total = avg_prefill_time + avg_tpot + 1e-9
+        observed_prefill_ratio = avg_prefill_time / total
+
+        log.info(f"observed_prefill_ratio={observed_prefill_ratio:.3f} target={TARGET_RATIO}")
+
+        drift = abs(observed_prefill_ratio - TARGET_RATIO)
+        if drift < REBALANCE_THRESH:
+            log.info("Within threshold, no rebalance needed")
+            sys.exit(0)
+
+        # Current replica counts
+        p_ss = apps_v1.read_namespaced_stateful_set(PREFILL_SS, NS)
+        d_ss = apps_v1.read_namespaced_stateful_set(DECODE_SS, NS)
+        cur_p = p_ss.spec.replicas or 1
+        cur_d = d_ss.spec.replicas or 1
+        total_pods = cur_p + cur_d
+
+        # Compute new ratio
+        if observed_prefill_ratio > TARGET_RATIO:
+            # Prefill is the bottleneck: add a prefill pod
+            new_p = min(cur_p + 1, MAX_P)
+            new_d = max(total_pods - new_p, MIN_D)
+        else:
+            # Decode is the bottleneck: add a decode pod
+            new_d = min(cur_d + 1, MAX_D)
+            new_p = max(total_pods - new_d, MIN_P)
+
+        log.info(f"Scaling prefill {cur_p} → {new_p}, decode {cur_d} → {new_d}")
+
+        apps_v1.patch_namespaced_stateful_set_scale(
+            PREFILL_SS, NS, {"spec": {"replicas": new_p}}
+        )
+        apps_v1.patch_namespaced_stateful_set_scale(
+            DECODE_SS, NS, {"spec": {"replicas": new_d}}
+        )
+
+    except Exception as e:
+        log.error(f"WVA error: {e}")
+        sys.exit(1)

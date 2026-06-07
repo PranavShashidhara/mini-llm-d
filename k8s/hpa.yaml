@@ -1,0 +1,54 @@
+---
+# k8s/hpa.yaml
+# HorizontalPodAutoscaler for the combined inference pool.
+# Scales on a custom external metric: tokens_per_second_per_pod
+# served by the Prometheus Adapter (see custom-metrics.yaml).
+
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: inference-hpa
+  namespace: mini-llmd
+  labels:
+    app: mini-llmd
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: StatefulSet
+    name: inference-combined
+
+  minReplicas: 1
+  maxReplicas: 4
+
+  metrics:
+    # Primary: scale up when throughput per pod gets high
+    - type: External
+      external:
+        metric:
+          name: tokens_per_second_per_pod
+        target:
+          type: AverageValue
+          averageValue: "80"
+
+    # Secondary: scale on queue depth as a safety valve
+    - type: External
+      external:
+        metric:
+          name: router_pod_queue_depth_avg
+        target:
+          type: AverageValue
+          averageValue: "8"
+
+  behavior:
+    scaleUp:
+      stabilizationWindowSeconds: 60
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 60
+    scaleDown:
+      stabilizationWindowSeconds: 120
+      policies:
+        - type: Pods
+          value: 1
+          periodSeconds: 120

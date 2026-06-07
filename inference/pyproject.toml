@@ -1,0 +1,68 @@
+# inference/pyproject.toml
+#
+# Dependencies for the vLLM inference pod.
+#
+# GPU INSTALL NOTE
+# ─────────────────────────────────────────────────────────────────────────────
+# vLLM depends on PyTorch built against CUDA. The official PyPI torch wheels
+# are CPU-only. We override the index for torch/torchvision/torchaudio to
+# point at the CUDA 12.1 wheel index published by the PyTorch project.
+#
+# uv respects [[tool.uv.index]] and [tool.uv.sources] for this purpose.
+# The Dockerfile also passes --index-url and --extra-index-url explicitly
+# as a belt-and-suspenders measure.
+#
+# CUDA 12.1 is the minimum required by vLLM 0.4.x.
+# If your host has CUDA 12.3+, these wheels still work (they are forward-
+# compatible within the major version).
+# ─────────────────────────────────────────────────────────────────────────────
+
+[project]
+name = "mini-llmd-inference"
+version = "0.1.0"
+description = "vLLM inference pod for mini-llm-d"
+requires-python = ">=3.11,<3.13"
+
+dependencies = [
+    # Core serving
+    "vllm==0.4.3",
+    "fastapi==0.111.0",
+    "uvicorn[standard]==0.30.1",
+
+    # Prefix hashing (shared with router)
+    "xxhash==3.4.1",
+
+    # Config
+    "pyyaml==6.0.1",
+
+    # Observability
+    "opentelemetry-api==1.24.0",
+    "opentelemetry-sdk==1.24.0",
+    "opentelemetry-exporter-otlp-proto-grpc==1.24.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# uv GPU / CUDA index configuration
+#
+# torch, torchvision, and torchaudio must come from the CUDA wheel index.
+# All other packages resolve from PyPI as normal.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu121"
+# Only packages listed in [tool.uv.sources] below use this index.
+# Everything else still resolves from PyPI.
+explicit = true
+
+[tool.uv.sources]
+# Force torch family to the CUDA wheel index.
+# vLLM pins its own torch version; these entries ensure uv doesn't pull
+# the CPU-only PyPI wheel when resolving the dependency graph.
+torch        = { index = "pytorch-cuda" }
+torchvision  = { index = "pytorch-cuda" }
+torchaudio   = { index = "pytorch-cuda" }

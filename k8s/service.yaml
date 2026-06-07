@@ -1,0 +1,103 @@
+---
+# k8s/service.yaml
+
+# Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: mini-llmd
+
+---
+# Headless service for StatefulSet DNS (pod-0.inference-headless.mini-llmd, etc.)
+apiVersion: v1
+kind: Service
+metadata:
+  name: inference-headless
+  namespace: mini-llmd
+  labels:
+    app: mini-llmd
+    role: combined
+spec:
+  clusterIP: None
+  selector:
+    app: mini-llmd
+    role: combined
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+
+---
+# Headless service for prefill pool
+apiVersion: v1
+kind: Service
+metadata:
+  name: inference-prefill-headless
+  namespace: mini-llmd
+spec:
+  clusterIP: None
+  selector:
+    app: mini-llmd
+    role: prefill
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+
+---
+# Headless service for decode pool
+apiVersion: v1
+kind: Service
+metadata:
+  name: inference-decode-headless
+  namespace: mini-llmd
+spec:
+  clusterIP: None
+  selector:
+    app: mini-llmd
+    role: decode
+  ports:
+    - name: http
+      port: 8000
+      targetPort: 8000
+
+---
+# ClusterIP for the router (internal access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: router
+  namespace: mini-llmd
+  labels:
+    app: mini-llmd
+    component: router
+spec:
+  type: ClusterIP
+  selector:
+    app: mini-llmd
+    component: router
+  ports:
+    - name: http
+      port: 9000
+      targetPort: 9000
+
+---
+# NodePort for external Locust access (minikube)
+apiVersion: v1
+kind: Service
+metadata:
+  name: router-nodeport
+  namespace: mini-llmd
+  labels:
+    app: mini-llmd
+    component: router
+spec:
+  type: NodePort
+  selector:
+    app: mini-llmd
+    component: router
+  ports:
+    - name: http
+      port: 9000
+      targetPort: 9000
+      nodePort: 30900

@@ -1,0 +1,34 @@
+# inference/requirements.in
+#
+# Human-readable, unpinned dependency list for the inference pod.
+# This is the SOURCE FILE — do not install from this directly in production.
+#
+# To regenerate the locked requirements.txt:
+#   uv pip compile requirements.in \
+#       --python-version 3.11 \
+#       --extra-index-url https://download.pytorch.org/whl/cu121 \
+#       -o requirements.txt
+#
+# The Dockerfile installs from requirements.txt (pinned) for reproducibility.
+# For local dev, use: uv sync  (from repo root or this directory)
+
+# Core serving
+vllm>=0.4.3,<0.5
+fastapi>=0.111,<0.112
+uvicorn[standard]>=0.30,<0.31
+
+# Prefix hashing
+xxhash>=3.4,<4
+
+# Config
+pyyaml>=6,<7
+
+# OpenTelemetry
+opentelemetry-api>=1.24,<2
+opentelemetry-sdk>=1.24,<2
+opentelemetry-exporter-otlp-proto-grpc>=1.24,<2
+
+# NOTE: torch/torchvision/torchaudio are transitive deps of vLLM.
+# They MUST be installed from the CUDA wheel index, not PyPI.
+# The --extra-index-url above handles this. Do not pin them here;
+# let vLLM's own pins drive the version.
